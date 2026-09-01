@@ -1,0 +1,274 @@
+指针：
+//都为声明节点，*不为解引用，发生在编译期
+一级指针：int* p//掌握较为熟练，可以存储函数中值等
+二级指针：int** p//即指向一级指针的指针，在函数中修改一级指针地址时较为常用
+函数指针：int (*p)()//注意：int* p()为返回一个指针类型的普通函数
+//（）>()(函数调用) > [] > * 
+//（*p）:p是一个指针，（）：这个指针指向一个函数
+//int (*p)():一个指向整型函数的指针
+指针数组：int* p[]//存储指针地址的数组
+数组指针：int (*p)[]
+//() 优先级高于 []，[] 高于 *，*p解引用，int* p,创建一个int类型的指针
+//（*p）:p是一个指针，[]:这个指针指向一个数组
+//int (*p)[]:p是一个int类型数组的指针
+//先看普通数组定义 int p[],其中p代表数组首地址，编译后可看作int* p
+//后面数字即为数组的长度
+//按照运算顺序进行分析，首先对其进行编译为int *(*p),可以发现貌似为int** p;
+//是一个二级指针，指向一级指针，所指向的一级指针就是不同数组的首地址
+//显而易见，数组指针表示的值即为这整个数组的首地址
+//前者类型是二级指针，两次解引用才能得到值，后者为一级指针仅需要一次解引用
+//后续运算操作是基于整个数组为单位运算，常用作与二维数组
+
+单片机中的内存分配释放问题：
+PC 操作系统有虚拟内存、MMU、进程隔离、OOM 机制，单片机的实时操作系统无内存保护
+常见的pc内存问题堆破坏、野指针、内存泄漏，单片机不会抛异常，出现死机等bug
+malloc/free底层原理
+高地址
+┌─────────────────────┐
+│ 栈 Stack            │ ↓ 向低地址增长（往下生长）
+├─────────────────────┤
+│ 【栈底边界】        │
+│ 空闲RAM（可选）     │
+├─────────────────────┤
+│ 堆 Heap             │ ↑ 向高地址增长（往上生长）
+├─────────────────────┤
+│ BSS段 (.bss)        │ 未初始化全局/静态变量
+├─────────────────────┤
+│ 数据段 (.data)      │ 已初始化全局/静态变量
+└─────────────────────┘
+低地址
+堆是一块原始连续内存，malloc库管理这块区域，本质就是内存分配器
+分配器核心结构（最简单的隐式空闲链表，大部分单片机标准库用类似实现）
+每一块内存分为两部分：
+块头部（Header）：记录块大小、是否空闲、链表指针
+用户可用内存（你拿到的void *指针）
+[Header(大小/标记)] [用户内存]
+malloc(size)
+遍历空闲链表，寻找大于等于 size的空闲块（首次适配 / 最佳适配）
+如果块剩余空间足够，分割成「已分配块 + 新空闲块」
+返回用户内存起始地址（注意：返回指针不包含 Header）
+free(ptr)
+根据传入指针回推 Header 地址（指针往前偏移 Header 长度）
+标记当前块为空闲
+相邻空闲块合并（关键！防止大量外部碎片）
+嵌入式致命痛点：碎片
+反复 malloc→free 产生大量零散小空闲块 → 外部碎片
+堆总空闲内存足够，但没有一块连续内存满足申请需求 → malloc返回NULL
+
+内存泄漏成因加排查：
+泄漏定义
+堆内存申请 malloc，程序永久丢失指针，永远不调用free；这块堆内存彻底无法回收。
+长期运行 → 堆慢慢耗尽 → 后续 malloc 返回 NULL，系统崩溃
+排查手段（没有 Valgrind！重点是工具与代码规范）
+最简单方案：堆水位监控（首选裸机 / RTOS）
+FreeRTOS：xPortGetMinimumEverFreeHeapSize()
+持续打印最小剩余堆，如果数值持续单向下降 → 100% 存在泄漏。
+封装 malloc 钩子函数
+重定义malloc_hook / free_hook，每次分配记录：指针、大小、调用函数（利用__FILE__ __LINE__），用环形缓存保存；程序异常时导出日志，比对「只分配未释放」的地址。
+静态代码检查
+PC 端使用 cppcheck、clang static analyzer，扫描路径缺失 free。
+压力测试
+循环长时间跑业务逻辑，定时打印剩余堆，观察趋势。
+嵌入式经验准则：
+长期运行的产品业务，尽量不要循环动态申请内存！优先静态缓冲区、内存池。
+
+野指针：成因、危害、彻底规避方案（单片机 HardFault 重灾区）
+野指针：指针变量存储非法地址，访问时触发内存访问异常。
+（1）悬空指针（最常见）
+内存free之后，没有把指针置 NULL
+char *p = malloc(64);
+free(p);
+// p仍然保存原来地址！p成为野指针
+strcpy(p, "123"); // 灾难：操作已经归还堆的内存，破坏堆管理头，堆彻底损坏
+重点：free 不会修改指针本身的值！free 只标记内存空闲。
+（2）越界指针
+malloc 拿到的内存读写超出范围，覆盖相邻块 Header → 堆结构破坏
+现象：后面 malloc/free 随机死机，bug 极其难复现（间歇性）。
+（3）未初始化指针
+char *p; // 局部变量，栈上随机垃圾值
+strcpy(p, "abc"); // 直接HardFault
+局部指针定义时初始化为NULL
+杜绝指针强制类型随意转换；
+缓冲区读写增加长度校验，防止越界；
+4. 堆破坏（比野指针更玄学，重点理解）
+malloc/free频繁死机，根源经常是堆头部被篡改：
+缓冲区越界写
+野指针乱写堆地址
+内存分配器的链表、块大小信息被改写，后续 free 遍历链表直接访问非法地址 → HardFault。
+这类 bug 很难复现，属于嵌入式调试噩梦
+实践方案：
+方案 A：能不用 malloc 就不用（首选工业产品）
+预先开辟静态全局缓冲区、环形 buffer；内存生命周期编译期确定，完全规避堆碎片、泄漏、野指针。
+方案 B：必须动态内存 → 使用内存池（Memory Pool）
+RTOS 原生提供内存池：
+预先划分 N 块固定大小内存
+分配 / 释放 O (1) 速度
+无外部碎片
+适合通信帧、固定结构体缓存，是嵌入式动态内存最优解，替代 malloc。
+方案 C：迫不得已使用 malloc
+禁止在中断内调用 malloc/free！（非线程安全，极易堆损坏）
+封装一层 my_malloc /my_free，带上钩子监控，增加日志
+定期打印堆最小空闲值，上线前长时间压力老化测试
+不频繁分配小块内存
+
+位操作：
+寄存器只能按整体读写，不能单独操作单位比特，必须用运算掩码配合
+reg:目标寄存器 n:要错做的第n位（从0开始） mask:掩码
+嵌入C使用无符号类型写作：1U等等，1默认为有符号值
+四种运算：
+按位或：|，按位与：&，按位异或：^，按位取反：~
+<<:左移，>>:右移
+标准模板
+1.将第n位置1  reg=reg|(1U<<n) 简写作 reg|=(1U<<n)
+1U        = 0b00001
+1U << 3   = 0b01000
+REG      = 1011 0010
+mask     = 0000 1000
+--------------------------------
+REG | mask = 1011 1010
+2.将第n位清0 reg=reg&~(1U<<n) 简写作reg&=~(1U<<n)
+3.将第n位翻转 reg=reg^(1U<<n) 简写作reg^=(1U<<n)
+4.读取第n位状态 if(reg&(1U<<n)){条件成立，该位为一}
+5.一次性操作多了比特
+uint32_t mask=(1U<<3|1U<<5);
+reg|=mask
+.......
+
+makefile,脱离ide:
+IDE（STM32CubeIDE、Keil）底层内部自带一套自动生成的 Makefile 工程。
+如果你只会点「编译按钮」，换芯片、换编译链、跨平台编译就束手无策。
+Makefile 是一份「任务清单 + 依赖规则文件」，给 make 程序读取。
+它告诉 make：源码怎么编译、文件之间谁依赖谁、执行哪些命令；make 根据这份文件自动构建工程。
+工具：make 工具；编译器常用 arm-none-eabi-gcc（ARM 单片机）
+Makefile 作用：描述源码依赖关系，调用编译器，增量编译（只编译改动文件，不用全部重编）
+arm-none-eabi-gcc = 交叉编译器
+make = 工程构建工具（调度编译器执行编译）
+正常在 Windows/Linux 上直接装的 gcc：
+编译出来的程序，只能在当前电脑（x86 CPU）运行。
+但你的单片机是 Cortex-M3/M4/M0（ARM 内核）
+电脑 CPU 指令集 和 ARM 单片机指令集 不兼容。
+你不能用 PC 本地 gcc 编译单片机程序！
+于是需要：交叉编译器
+在 PC 上运行，专门生成 ARM 芯片能识别机器码的编译器
+arm：目标 CPU 架构 → ARM 内核
+none：无操作系统
+适用：裸机单片机、FreeRTOS、RT-Thread（没有 Linux）
+不能用来编译 ARM Linux 程序（Linux 用 arm-linux-gnueabihf-gcc）
+eabi：嵌入式二进制接口，规定函数调用、栈、寄存器使用规范
+gcc：基于 GCC 编译器套件
+整套工具链不只是 gcc，是一整套程序
+arm-none-eabi-gcc      # C编译器
+arm-none-eabi-g++      # C++编译器
+arm-none-eabi-as       # 汇编器
+arm-none-eabi-ld       # 链接器
+arm-none-eabi-objcopy  # elf → bin / hex（你烧录固件必备）
+arm-none-eabi-objdump  # 反汇编，调试看汇编代码
+arm-none-eabi-size     # 查看Flash/RAM占用大小
+
+make 工具 和 arm-none-eabi-gcc 的关系
+arm-none-eabi-gcc = 水泥工（真正干活编译代码）
+make + Makefile = 包工头，安排工人什么时候干什么活
+Keil、STM32CubeIDE 图形界面底层：
+要么自带编译器，内部封装了一套类似 Make 的构建流程；
+完整一条编译命令直观感受（不用背，看懂即可）
+arm-none-eabi-gcc -mcpu=cortex-m3 -mthumb -c main.c -o main.o
+含义：
+使用 arm 交叉编译器，针对 Cortex-M3 内核，编译 main.c 生成目标文件 main.o
+你看不到命令行，点一下编译按钮，IDE 后台自动调用编译器。
+
+最基础语法格式（硬性规范！Tab 不能用空格替代）
+makefile
+目标: 依赖文件
+	命令    # ⚠️前面必须是【Tab键】，4个空格不行！
+执行逻辑：
+检查所有依赖文件是否存在；
+如果「目标不存在」或者「依赖文件修改时间比目标新」→ 执行下方命令。
+
+最简样板 Makefile（嵌入式通用骨架，直接改路径就能用）
+makefile
+# 1. 【配置区】常量定义，顶层统一修改
+CC = arm-none-eabi-gcc
+OBJCOPY = arm-none-eabi-objcopy
+OBJDUMP = arm-none-eabi-objdump
+
+# 编译参数：CPU架构、浮点、警告、标准
+CFLAGS  = -mcpu=cortex-m3 -mthumb
+CFLAGS += -Wall -O1 -g
+CFLAGS += -DSTM32F10X_MD  # 宏定义，等同于IDE里全局宏
+
+# 链接脚本（ld链接脚本，规定RAM/Flash布局！重中之重）
+LDSCRIPT = stm32f103.ld
+LDFLAGS  = -T$(LDSCRIPT) -Wl,-Map=target.map
+
+# 源文件
+SRC = main.c gpio.c usart.c startup_stm32f10x_md.s
+OBJ = $(SRC:.c=.o) $(SRC:.s=.o)
+TARGET = app
+
+# 2. 【终极目标】最终生成elf文件
+all: $(TARGET).elf
+	$(OBJCOPY) -O binary $(TARGET).elf $(TARGET).bin
+	$(OBJCOPY) -O ihex $(TARGET).elf $(TARGET).hex
+
+# 链接：所有.o合并成elf可执行文件
+$(TARGET).elf: $(OBJ)
+	$(CC) $(OBJ) $(LDFLAGS) -o $@
+
+# 模式规则：.c 文件编译成 .o
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 汇编文件编译规则
+%.o: %.s
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# 清理编译产物
+clean:
+	rm -f *.o $(TARGET).elf $(TARGET).bin $(TARGET).hex *.map
+内置自动变量（必须记住，写 Makefile 高频）
+$@：当前规则的目标文件
+$<：第一个依赖文件
+$^：全部依赖文件
+
+常用指令
+make        # 执行all，完整编译
+make clean  # 删除所有.o、elf、bin、hex，彻底清理
+
+嵌入式开发几个关键概念（和单片机强关联）
+startup.s 启动文件
+汇编文件，必须参与编译；负责初始化栈、bss 清零、跳转到 main。
+.ld 链接脚本
+划定 Flash、RAM 地址范围；没有链接脚本，编译器不知道程序放在哪块存储器。
+你之前记的栈、堆、data、bss 布局，全部由 ld 脚本定义！
+产物区别
+.elf：带调试信息，给仿真器下载调试
+.bin：纯二进制固件，直接烧录 Flash
+.hex：intel 格式固件，多种下载器支持
+
+进阶常用技巧（真实项目要用）
+1. 自动遍历多个文件夹下所有 c 文件
+makefile
+# 查找src、driver文件夹所有.c
+SRC += $(wildcard src/*.c driver/*.c)
+wildcard：通配符函数，自动匹配文件，不用手动一个个添加文件。
+2. 头文件路径 -I
+多个文件夹放.h，必须添加头文件搜索路径：
+makefile
+CFLAGS += -I./inc
+CFLAGS += -I./driver/inc
+等价于 Keil 里的「Include Paths」
+3. 条件编译宏 -Dxxx
+makefile
+CFLAGS += -DDEBUG=1
+代码里：
+c
+运行
+#if DEBUG
+printf("debug log\r\n");
+#endif
+
+Makefile vs IDE 核心优势
+可以写脚本批量编译、自动化构建；
+服务器、CI 自动编译（持续集成）不依赖图形界面；
+清晰掌握每一条编译、链接参数，明白 IDE 隐藏的配置；
+跨平台，Linux、WSL、macOS 均可编译单片机程序。

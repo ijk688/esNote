@@ -1,0 +1,73 @@
+常见缩写
+oc output compare 输出比较
+defgroup 宏定义组
+pin 引脚
+param      parameter 参数
+ret		return	返回
+retval	return value	返回值
+func	function	函数
+cfg	configuration	配置
+reg	register	寄存器
+ptr	pointer	指针
+param	parameter	参数
+arg	argument	实参
+dev	device	设备
+irq	interrupt request	中断请求
+cmd  command 命令
+ref reference 参考、参见
+APB	Advanced Peripheral Bus	高级外设总线
+
+AHB	Advanced High-performance Bus	高级高性能总线
+ARM AMBA架构高速主总线；内核、DMA、闪存挂载于此
+
+
+AFIO 复用输入输出选择器
+EXTI   外部中断 / 事件控制器
+GPIO_Exported_Constants GPIO 对外导出常量
+ADC 模数转换器
+BKP 备份寄存器
+CAN 控制器局域网模块
+DMA 直接内存存取控制器
+EXTI 外部中断事件控制器
+FLASH 闪存存储器
+GPIO 通用输入输出
+I2C 内部集成电路
+IWDG 独立看门狗
+NVIC 嵌套中断向量列表控制器
+PWR 电源/功耗控制
+RCC 复位与时钟控制器
+RTC 实时时钟
+SPI 串行外设接口
+SysTick 系统嘀嗒定时器
+TIM 通用定时器
+TIM1 高级控制定时器
+USART 通用同步异步接收发射端
+WWDG 窗口看门狗
+AIN — Analog Input
+模拟输入
+IN_FLOATING — Input Floating
+浮空输入
+IPD — Input Pull-Down
+下拉输入
+IPU — Input Pull-Up
+上拉输入
+OD — Open-Drain
+开漏
+PP — Push-Pull
+推挽
+AF — Alternate Function
+复用功能
+
+常见英文
+polarity 极性
+pulse 脉冲
+prescaler 预分频器
+ demonstration 演示
+enumeration 枚举
+configuration 配置
+brief 简要说明
+Function prototype 函数原型
+Parameter 参数
+Peripheral 外设
+Specify 指定
+gate its clock 时钟门控
